@@ -2,7 +2,7 @@
 
 services:
   caddy:
-    restart: on-failure
+    restart: "no"
     image: caddy:2
     ports:
       - "80:80"

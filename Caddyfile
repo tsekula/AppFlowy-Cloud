@@ -1,0 +1,161 @@
+# Caddyfile for AppFlowy-Cloud
+# Converting from the nginx configuration
+
+{
+    # Global options
+    admin off
+    debug
+    
+    # Allow underscores in headers
+    header_up Host {host}
+    header_up X-Real-IP {remote}
+    header_up X-Forwarded-For {remote}
+    header_up X-Forwarded-Proto {scheme}
+    
+    # Set up internal DNS resolver (will use Caddy's default resolver)
+}
+
+# Metrics endpoint
+:8080 {
+    metrics
+}
+
+# Main server
+docs.skyoverhill.com {
+    # Set TLS certificates - Caddy will automatically get HTTPS certificates
+    tls {
+        # Remove the manual certificate paths to let Caddy handle HTTPS automatically
+        # Or keep these lines if you want to use your own certificates
+        # protocols tls1.2 tls1.3
+    }
+    
+    # Global settings
+    encode gzip
+    
+    # Increase request size limit to 10MB generally, with specific endpoints having larger limits
+    request_body {
+        max_size 10MB
+    }
+    
+    # CORS handling for localhost:3000 (AppFlowy Web origin)
+    @cors_preflight {
+        method OPTIONS
+    }
+    
+    # GoTrue endpoints
+    handle /gotrue/* {
+        header @cors_preflight Access-Control-Allow-Origin {http.request.header.Origin}
+        header @cors_preflight Access-Control-Allow-Credentials "true" 
+        header @cors_preflight Access-Control-Allow-Headers "*"
+        header @cors_preflight Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+        header @cors_preflight Content-Type "text/plain charset=UTF-8"
+        header @cors_preflight Content-Length "0"
+        
+        respond @cors_preflight 204
+        
+        uri strip_prefix /gotrue
+        reverse_proxy http://gotrue:9999
+    }
+    
+    # WebSocket endpoint
+    handle /ws {
+        reverse_proxy http://appflowy_cloud:8000 {
+            transport websocket {
+                keepalive 86400s
+            }
+        }
+    }
+    
+    # API endpoints
+    handle /api* {
+        header Access-Control-Allow-Origin {http.request.header.Origin}
+        header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type, Authorization, Accept, Client-Version, Device-Id"
+        header Access-Control-Max-Age "3600"
+        
+        @options method OPTIONS
+        respond @options 204
+        
+        # Special handling for workspace publish endpoint
+        @publish path_regexp ^/api/workspace/([a-zA-Z0-9_-]+)/publish$
+        handle @publish {
+            request_body {
+                max_size 256MB
+            }
+            reverse_proxy http://appflowy_cloud:8000
+        }
+        
+        # Chat endpoint with special timeout handling
+        @chat path /api/chat
+        handle @chat {
+            reverse_proxy http://appflowy_cloud:8000 {
+                timeout 600s
+                flush_interval -1
+            }
+        }
+        
+        # Import endpoint with special handling for large files
+        @import path /api/import
+        handle @import {
+            request_body {
+                max_size 2GB
+            }
+            reverse_proxy http://appflowy_cloud:8000 {
+                timeout 600s
+            }
+        }
+        
+        # Default API handling
+        reverse_proxy http://appflowy_cloud:8000
+    }
+    
+    # AppFlowy AI
+    handle /ai* {
+        reverse_proxy http://ai:5001
+    }
+    
+    # Minio Web UI
+    handle /minio/* {
+        uri strip_prefix /minio
+        reverse_proxy http://minio:9001 {
+            header_up Host {host}
+            
+            # Support for WebSockets
+            transport websocket
+        }
+    }
+    
+    # Minio API (for presigned URLs)
+    handle /minio-api/* {
+        uri strip_prefix /minio-api
+        header_up Host minio:9000
+        reverse_proxy http://minio:9000
+    }
+    
+    # PgAdmin
+    handle /pgadmin/* {
+        header_up X-Script-Name /pgadmin
+        reverse_proxy http://pgadmin:80
+    }
+    
+    # Portainer
+    handle /portainer/* {
+        uri strip_prefix /portainer
+        reverse_proxy http://portainer:9000
+    }
+    
+    # Admin Frontend
+    handle /console* {
+        reverse_proxy http://admin_frontend:3000
+    }
+    
+    # Default handler for AppFlowy Web
+    handle {
+        reverse_proxy http://appflowy_web:80
+    }
+}
+
+# HTTP to HTTPS redirect
+http://docs.skyoverhill.com {
+    redir https://docs.skyoverhill.com{uri} permanent
+}

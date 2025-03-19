@@ -9,7 +9,7 @@ services:
       - "443:443"
       - "8080:8080"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./Caddyfile-manual:/etc/caddy/Caddyfile
       - caddy_data:/data
       - caddy_config:/config
     environment:
@@ -40,9 +40,6 @@ services:
 
   gotrue:
     restart: on-failure
-    build:
-      context: docker/gotrue
-      dockerfile: Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,11 +112,6 @@ services:
       - AI_OPENAI_API_KEY=${AI_OPENAI_API_KEY}
       - APPFLOWY_ADMIN_FRONTEND_PATH_PREFIX=${ADMIN_FRONTEND_PATH_PREFIX}
       - APPFLOWY_WEB_URL=${APPFLOWY_WEB_URL}
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        FEATURES: ""
     image: appflowyinc/appflowy_cloud:${APPFLOWY_CLOUD_VERSION:-latest}
     depends_on:
       gotrue:
@@ -127,9 +119,6 @@ services:
 
   admin_frontend:
     restart: on-failure
-    build:
-      context: .
-      dockerfile: ./admin_frontend/Dockerfile
     image: appflowyinc/admin_frontend:${APPFLOWY_ADMIN_FRONTEND_VERSION:-latest}
     environment:
       - RUST_LOG=${RUST_LOG:-info}
@@ -156,9 +145,6 @@ services:
   appflowy_worker:
     restart: on-failure
     image: appflowyinc/appflowy_worker:${APPFLOWY_WORKER_VERSION:-latest}
-    build:
-      context: .
-      dockerfile: ./services/appflowy-worker/Dockerfile
     environment:
       - RUST_LOG=${RUST_LOG:-info}
       - APPFLOWY_ENVIRONMENT=production

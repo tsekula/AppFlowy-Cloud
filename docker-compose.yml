@@ -1,4 +1,18 @@
 services:
+  caddy:
+    restart: on-failure
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${FQDN:-docs.skyoverhill.com}
+      - EMAIL=tom@sekula.com
   redis:
     restart: on-failure
     image: redis

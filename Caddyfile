@@ -45,13 +45,9 @@ docs.skyoverhill.com {
         reverse_proxy gotrue:9999
     }
 
-    # WebSocket endpoint
+    # WebSocket endpoint - Caddy handles WebSocket upgrades automatically
     handle /ws {
-        reverse_proxy appflowy_cloud:8000 {
-            transport websocket {
-                keepalive 86400s
-            }
-        }
+        reverse_proxy appflowy_cloud:8000
     }
 
     # API endpoints
@@ -117,9 +113,7 @@ docs.skyoverhill.com {
     # Minio Web UI
     handle /minio/* {
         uri strip_prefix /minio
-        reverse_proxy minio:9001 {
-            transport websocket
-        }
+        reverse_proxy minio:9001
     }
 
     # Minio API (for presigned URLs)

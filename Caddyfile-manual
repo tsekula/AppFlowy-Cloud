@@ -1,0 +1,155 @@
+appflowy.skyoverhill.com {
+    # Main AppFlowy web application
+    reverse_proxy appflowy_web:3000
+
+    # Security headers
+    header {
+        # Enable HTTP Strict Transport Security (HSTS)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Disable clients from sniffing the media type
+        X-Content-Type-Options "nosniff"
+        # Keep referrer data off of HTTP connections
+        Referrer-Policy "no-referrer-when-downgrade"
+        # Define valid sources for loading content
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://files.skyoverhill.com; font-src 'self' data:; object-src 'none'; frame-ancestors 'self'; connect-src 'self' wss://appflowy.skyoverhill.com https://files.skyoverhill.com"
+        # Prevent rendering in a frame
+        X-Frame-Options "SAMEORIGIN"
+        # Enable cross-site filter (XSS) protection in browsers
+        X-XSS-Protection "1; mode=block"
+    }
+
+    # Enable logging
+    log {
+        output file /data/appflowy-access.log
+    }
+}
+
+admin.appflowy.skyoverhill.com {
+    # AppFlowy admin panel
+    reverse_proxy admin_frontend:3000
+    
+    # Security headers
+    header {
+        # Enable HTTP Strict Transport Security (HSTS)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Disable clients from sniffing the media type
+        X-Content-Type-Options "nosniff"
+        # Keep referrer data off of HTTP connections
+        Referrer-Policy "no-referrer-when-downgrade"
+        # Define valid sources for loading content
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; object-src 'none'; frame-ancestors 'self'; connect-src 'self' wss://admin.appflowy.skyoverhill.com"
+    }
+    
+    # Enable logging
+    log {
+        output file /data/appflowy-admin-access.log
+    }
+}
+
+api.appflowy.skyoverhill.com {
+    # AppFlowy API
+    reverse_proxy appflowy_cloud:8000
+    
+    # Security headers
+    header {
+        # Enable HTTP Strict Transport Security (HSTS)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Disable clients from sniffing the media type
+        X-Content-Type-Options "nosniff"
+        # Allow cross-origin requests from the web app
+        Access-Control-Allow-Origin "https://appflowy.skyoverhill.com"
+        Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+        Access-Control-Allow-Headers "Content-Type, Authorization"
+        Access-Control-Allow-Credentials "true"
+    }
+    
+    # Enable logging
+    log {
+        output file /data/appflowy-api-access.log
+    }
+}
+
+auth.appflowy.skyoverhill.com {
+    # AppFlowy Authentication (GoTrue)
+    reverse_proxy gotrue:9999
+    
+    # Security headers
+    header {
+        # Enable HTTP Strict Transport Security (HSTS)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Disable clients from sniffing the media type
+        X-Content-Type-Options "nosniff"
+        # Allow cross-origin requests from the web app
+        Access-Control-Allow-Origin "https://appflowy.skyoverhill.com"
+        Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+        Access-Control-Allow-Headers "Content-Type, Authorization"
+        Access-Control-Allow-Credentials "true"
+    }
+    
+    # Enable logging
+    log {
+        output file /data/appflowy-auth-access.log
+    }
+}
+
+files.skyoverhill.com {
+    # MinIO S3 API (shared for all applications)
+    reverse_proxy minio:9000
+    
+    # Security headers
+    header {
+        # Enable HTTP Strict Transport Security (HSTS)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Disable clients from sniffing the media type
+        X-Content-Type-Options "nosniff"
+        # Keep referrer data off of HTTP connections
+        Referrer-Policy "no-referrer-when-downgrade"
+    }
+    
+    # Enable logging
+    log {
+        output file /data/files-access.log
+    }
+}
+
+admin.files.skyoverhill.com {
+    # MinIO Console (shared for all applications)
+    reverse_proxy minio:9001
+    
+    # Security headers
+    header {
+        # Enable HTTP Strict Transport Security (HSTS)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Disable clients from sniffing the media type
+        X-Content-Type-Options "nosniff"
+        # Keep referrer data off of HTTP connections
+        Referrer-Policy "no-referrer-when-downgrade"
+    }
+    
+    # Enable logging
+    log {
+        output file /data/minio-admin-access.log
+    }
+}
+
+ai.skyoverhill.com {
+    # Open WebUI
+    reverse_proxy openwebui:8080
+    
+    # Security headers
+    header {
+        # Enable HTTP Strict Transport Security (HSTS)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        # Disable clients from sniffing the media type
+        X-Content-Type-Options "nosniff"
+        # Keep referrer data off of HTTP connections
+        Referrer-Policy "no-referrer-when-downgrade"
+        # Allow WebSockets and API connections
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss://ai.skyoverhill.com https://ai.skyoverhill.com;"
+    }
+    
+    # Enable logging
+    log {
+        output file /data/ai-access.log
+    }
+}

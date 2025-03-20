@@ -1,19 +1,16 @@
 services:
-  caddy:
+  nginx:
     restart: on-failure
-    image: caddy:2
+    image: nginx
     ports:
-      - "80:80"
-      - "443:443"
-      - "8080:8080"
+      - ${NGINX_PORT:-80}:80   # Disable this if you are using TLS
+      - ${NGINX_TLS_PORT:-443}:443
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
-      - caddy_config:/config
-    environment:
-      - DOMAIN=${FQDN:-docs.skyoverhill.com}
-      - EMAIL=tom@sekula.com
-
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl/certificate.crt:/etc/nginx/ssl/certificate.crt
+      - ./nginx/ssl/private_key.key:/etc/nginx/ssl/private_key.key
+    networks:
+      - shared_network
   postgres:
     restart: on-failure
     image: pgvector/pgvector:pg16

@@ -1,155 +1,111 @@
-# Caddyfile for AppFlowy-Cloud
-# Converting from the nginx configuration
-
 {
-    # Global options
-    admin off
-    debug
+	# Global options
+	admin off # Disable admin endpoint for security
+	
+	# Set Caddy defaults
+	servers {
+		protocols h1 h2
+	}
 }
 
-# Metrics endpoint (corresponds to nginx stub_status)
+# Metrics endpoint (equivalent to nginx stub_status)
 :8080 {
-    metrics
+	metrics
 }
 
 # Main server block
-docs.skyoverhill.com {
-    # Global settings
-    encode gzip
-    
-    # Default body size limit (can be overridden in specific routes)
-    request_body {
-        max_size 10M
-    }
+{$SERVER_NAME:localhost} {
+	# TLS configuration
+	tls /etc/caddy/ssl/certificate.crt /etc/caddy/ssl/private_key.key
 
-    # GoTrue authentication service
-    handle /gotrue/* {
-        uri strip_prefix /gotrue
-        
-        # CORS for GoTrue
-        @options {
-            method OPTIONS
-        }
-        handle @options {
-            header {
-                Access-Control-Allow-Origin {http.request.header.Origin}
-                Access-Control-Allow-Credentials "true"
-                Access-Control-Allow-Headers "*"
-                Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-                Content-Type "text/plain charset=UTF-8"
-                Content-Length "0"
-            }
-            respond 204
-        }
-        
-        reverse_proxy gotrue:9999
-    }
+	# CORS handling for preflight requests
+	@options {
+		method OPTIONS
+	}
+	handle @options {
+		header Access-Control-Allow-Origin "{http.request.header.Origin}"
+		header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+		header Access-Control-Allow-Headers "Content-Type, Authorization, Accept, Client-Version, Device-Id"
+		header Access-Control-Allow-Credentials "true"
+		header Access-Control-Max-Age "3600"
+		respond 204
+	}
 
-    # WebSocket endpoint - Caddy handles WebSocket upgrades automatically
-    handle /ws {
-        reverse_proxy appflowy_cloud:8000
-    }
+	# GoTrue auth service
+	handle /gotrue/* {
+		uri strip_prefix /gotrue
+		reverse_proxy gotrue:9999
+	}
 
-    # API endpoints
-    handle /api/* {
-        # CORS for API
-        @options {
-            method OPTIONS
-        }
-        handle @options {
-            header {
-                Access-Control-Allow-Origin {http.request.header.Origin}
-                Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS"
-                Access-Control-Allow-Headers "Content-Type, Authorization, Accept, Client-Version, Device-Id"
-                Access-Control-Max-Age "3600"
-            }
-            respond 204
-        }
+	# WebSocket endpoint
+	handle /ws* {
+		reverse_proxy appflowy_cloud:8000
+	}
 
-        # Workspace publish endpoint
-        @publish {
-            path_regexp ^/api/workspace/([a-zA-Z0-9_-]+)/publish$
-        }
-        handle @publish {
-            request_body {
-                max_size 256M
-            }
-            reverse_proxy appflowy_cloud:8000
-        }
+	# API endpoints
+	handle /api/* {
+		header Access-Control-Allow-Origin "{http.request.header.Origin}"
+		header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+		header Access-Control-Allow-Headers "Content-Type, Authorization, Accept, Client-Version, Device-Id"
+		header Access-Control-Max-Age "3600"
 
-        # Chat endpoint
-        @chat {
-            path /api/chat
-        }
-        handle @chat {
-            reverse_proxy appflowy_cloud:8000 {
-                timeout 600s
-                flush_interval -1
-            }
-        }
+		# Special handling for workspace publish endpoint (large files)
+		@workspace_publish path_regexp ^/api/workspace/([a-zA-Z0-9_-]+)/publish$
+		handle @workspace_publish {
+			reverse_proxy appflowy_cloud:8000
+		}
 
-        # Import endpoint
-        @import {
-            path /api/import
-        }
-        handle @import {
-            request_body {
-                max_size 2G
-            }
-            reverse_proxy appflowy_cloud:8000 {
-                timeout 600s
-            }
-        }
+		# Chat API with streaming support
+		@chat path /api/chat*
+		handle @chat {
+			reverse_proxy appflowy_cloud:8000
+		}
 
-        # Default API handling
-        reverse_proxy appflowy_cloud:8000
-    }
+		# Import API with large file support
+		@import path /api/import*
+		handle @import {
+			reverse_proxy appflowy_cloud:8000
+		}
 
-    # AppFlowy AI
-    handle /ai/* {
-        reverse_proxy ai:5001
-    }
+		# Default API handling
+		reverse_proxy appflowy_cloud:8000
+	}
 
-    # Minio Web UI
-    handle /minio/* {
-        uri strip_prefix /minio
-        reverse_proxy minio:9001
-    }
+	# AI endpoints
+	handle /ai* {
+		reverse_proxy ai:5001
+	}
 
-    # Minio API (for presigned URLs)
-    handle /minio-api/* {
-        uri strip_prefix /minio-api
-        header_up Host {http.reverse_proxy.upstream.hostport}
-        reverse_proxy minio:9000
-    }
+	# Minio Web UI
+	handle /minio/* {
+		uri strip_prefix /minio
+		reverse_proxy minio:9001
+	}
 
-    # PgAdmin
-    handle /pgadmin/* {
-        header_up X-Script-Name /pgadmin
-        header_up X-Scheme {scheme}
-        reverse_proxy pgadmin:80
-    }
+	# Minio API (for presigned URLs)
+	handle /minio-api/* {
+		uri strip_prefix /minio-api
+		reverse_proxy minio:9000
+	}
 
-    # Portainer
-    handle /portainer/* {
-        uri strip_prefix /portainer
-        reverse_proxy portainer:9000
-    }
+	# PgAdmin
+	handle /pgadmin/* {
+		reverse_proxy pgadmin:80
+	}
 
-    # Admin Frontend
-    handle /console* {
-        header_up X-Scheme {scheme}
-        reverse_proxy admin_frontend:3000
-    }
+	# Portainer
+	handle /portainer/* {
+		uri strip_prefix /portainer
+		reverse_proxy portainer:9000
+	}
 
-    # Default handler for AppFlowy Web
-    handle {
-        header_up X-Scheme {scheme}
-        reverse_proxy appflowy_web:80
-    }
-}
+	# Admin Frontend
+	handle /console* {
+		reverse_proxy admin_frontend:3000
+	}
 
-# HTTP to HTTPS redirect
-http://docs.skyoverhill.com {
-    redir https://{host}{uri} permanent
+	# AppFlowy Web (default handler)
+	handle {
+		reverse_proxy appflowy_web:80
+	}
 }

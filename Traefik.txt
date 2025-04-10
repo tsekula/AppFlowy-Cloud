@@ -1,0 +1,166 @@
+http:
+  middlewares:
+    auth:
+      basicAuth:
+        users:
+          - "test:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/"
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+    appflowy-cors:
+      headers:
+        accessControlAllowOriginList:
+          - 'https://docs.skyoverhill.com'
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Content-Type
+          - Authorization
+          - Accept
+          - Client-Version
+          - Device-Id
+        accessControlMaxAge: 3600
+        addVaryHeader: true
+    appflowy-api-cors:
+      headers:
+        accessControlAllowOriginList:
+          - 'https://docs.skyoverhill.com'
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Content-Type
+          - Authorization
+          - Accept
+          - Client-Version
+          - Device-Id
+        accessControlMaxAge: 3600
+        addVaryHeader: true
+    appflowy-publish-cors:
+      headers:
+        accessControlAllowOriginList:
+          - 'https://docs.skyoverhill.com'
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+          - OPTIONS
+        accessControlAllowHeaders:
+          - Content-Type
+          - Authorization
+          - Accept
+          - Client-Version
+          - Device-Id
+        accessControlMaxAge: 3600
+        addVaryHeader: true
+    gotrue-cors:
+      headers:
+        accessControlAllowOriginList:
+          - 'https://docs.skyoverhill.com'
+        accessControlAllowCredentials: true
+        accessControlAllowHeaders:
+          - '*'
+        accessControlAllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+          - OPTIONS
+        accessControlMaxAge: 3600
+        addVaryHeader: true
+  routers:
+    dashboard-http:
+      rule: 'Host(`docs.skyoverhill.com`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))'
+      entryPoints:
+        - http
+      service: api@internal
+      middlewares:
+        - redirect-to-https
+    dashboard-https:
+      rule: 'Host(`docs.skyoverhill.com`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))'
+      entryPoints:
+        - https
+      service: api@internal
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - auth
+    gotrue:
+      rule: 'Host(`docs.skyoverhill.com`) && PathPrefix(`/gotrue`)'
+      service: gotrue
+      entryPoints:
+        - https
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - gotrue-cors
+    websocket:
+      rule: PathPrefix(`/ws`)
+      service: appflowy-cloud
+    api:
+      rule: 'PathPrefix(`/api`) && !PathRegexp(`/api/workspace/([a-zA-Z0-9_-]+)/publish`) && !PathPrefix(`/api/chat`) && !PathPrefix(`/api/import`)'
+      service: appflowy-cloud
+      middlewares:
+        - appflowy-api-cors
+    workspace-publish:
+      rule: 'PathRegexp(`/api/workspace/([a-zA-Z0-9_-]+)/publish`)'
+      service: appflowy-cloud
+      middlewares:
+        - appflowy-publish-cors
+    chat-api:
+      rule: PathPrefix(`/api/chat`)
+      service: appflowy-cloud
+      middlewares:
+        - appflowy-api-cors
+    import-api:
+      rule: PathPrefix(`/api/import`)
+      service: appflowy-cloud
+      middlewares:
+        - appflowy-api-cors
+    ai:
+      rule: PathPrefix(`/ai`)
+      service: appflowy-ai
+    admin-console:
+      rule: PathPrefix(`/console`)
+      service: admin-frontend
+    web:
+      rule: PathPrefix(`/`)
+      service: appflowy-web
+  services:
+    appflowy-cloud:
+      loadBalancer:
+        servers:
+          -
+            url: 'http://appflowy_cloud:8000'
+    gotrue:
+      loadBalancer:
+        servers:
+          -
+            url: 'http://gotrue:9999'
+    appflowy-ai:
+      loadBalancer:
+        servers:
+          -
+            url: 'http://ai:5001'
+    admin-frontend:
+      loadBalancer:
+        servers:
+          -
+            url: 'http://admin_frontend:3000'
+    appflowy-web:
+      loadBalancer:
+        servers:
+          -
+            url: 'http://appflowy_web:80'

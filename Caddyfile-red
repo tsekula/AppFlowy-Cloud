@@ -1,0 +1,21 @@
+docs.skyoverhill.com:443 {                                                                                            
+     header / {                                                                                                     
+         # Enable HTTP Strict Transport Security (HSTS)                                                             
+         Strict-Transport-Security "max-age=31536000;"                                                              
+         # Enable cross-site filter (XSS) and tell browser to block detected attacks                                
+         X-XSS-Protection "1; mode=block"                                                                           
+         # Disallow the site to be rendered within a frame (clickjacking protection)                                
+         X-Frame-Options "DENY"                                                                                     
+         # Prevent search engines from indexing (optional)                                                          
+         X-Robots-Tag "none"                                                                                        
+         # Server name removing                                                                                     
+         -Server                                                                                                    
+     }                                                                                                              
+     reverse_proxy http://appflowynginx:80 {                                                                        
+         header_up Host {http.request.host}                                                                         
+         header_up X-Real-IP {http.request.remote}                                                                  
+         header_up X-Forwarded-For {http.request.remote}                                                            
+         header_up X-Forwarded-Port {http.request.port}                                                             
+         header_up X-Forwarded-Proto {http.request.scheme}                                                          
+     }                                                                                                              
+ } 

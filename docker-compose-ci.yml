@@ -35,7 +35,7 @@ services:
 
   postgres:
     restart: on-failure
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg15
     ports:
       - "5432:5432"
     healthcheck:
@@ -194,6 +194,7 @@ services:
       - "5001:5001"
     environment:
       - OPENAI_API_KEY=${AI_OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${AI_ANTHROPIC_API_KEY}
       - AI_AWS_ACCESS_KEY_ID=${APPFLOWY_S3_ACCESS_KEY}
       - AI_AWS_SECRET_ACCESS_KEY=${APPFLOWY_S3_SECRET_KEY}
       - AI_APPFLOWY_BUCKET_NAME=${AI_APPFLOWY_BUCKET_NAME}

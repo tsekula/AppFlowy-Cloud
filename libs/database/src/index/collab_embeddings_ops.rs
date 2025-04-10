@@ -15,8 +15,7 @@ use uuid::Uuid;
 pub async fn get_index_status<'a, E>(
   tx: E,
   workspace_id: &Uuid,
-  object_id: &str,
-  partition_key: i32,
+  object_id: &Uuid,
 ) -> Result<IndexingStatus, sqlx::Error>
 where
   E: Executor<'a, Database = Postgres>,
@@ -29,13 +28,12 @@ SELECT
     WHEN w.settings['disable_search_indexing']::boolean THEN
       FALSE
     ELSE
-      EXISTS (SELECT 1 FROM af_collab_embeddings m WHERE m.partition_key = $3 AND m.oid = $2)
+      EXISTS (SELECT 1 FROM af_collab_embeddings m WHERE m.oid = $2::uuid)
   END as has_index
 FROM af_workspace w
 WHERE w.workspace_id = $1"#,
     workspace_id,
-    object_id,
-    partition_key
+    object_id
   )
   .fetch_one(tx)
   .await;
@@ -66,7 +64,7 @@ WHERE w.workspace_id = $1"#,
 struct Fragment {
   fragment_id: String,
   content_type: i32,
-  contents: String,
+  contents: Option<String>,
   embedding: Option<Vector>,
   metadata: serde_json::Value,
   fragment_index: i32,
@@ -96,26 +94,57 @@ impl PgHasArrayType for Fragment {
 pub async fn upsert_collab_embeddings(
   transaction: &mut Transaction<'_, Postgres>,
   workspace_id: &Uuid,
-  object_id: &str,
-  collab_type: CollabType,
+  object_id: &Uuid,
   tokens_used: u32,
   records: Vec<AFCollabEmbeddedChunk>,
 ) -> Result<(), sqlx::Error> {
   let fragments = records.into_iter().map(Fragment::from).collect::<Vec<_>>();
   tracing::trace!(
-    "[Embedding] upsert {} {} fragments",
+    "[Embedding] upsert {} {} fragments, fragment ids: {:?}",
     object_id,
-    fragments.len()
+    fragments.len(),
+    fragments
+      .iter()
+      .map(|v| v.fragment_id.clone())
+      .collect::<Vec<_>>()
   );
-  sqlx::query(r#"CALL af_collab_embeddings_upsert($1, $2, $3, $4, $5::af_fragment_v3[])"#)
+  sqlx::query(r#"CALL af_collab_embeddings_upsert($1, $2, $3, $4::af_fragment_v3[])"#)
     .bind(*workspace_id)
     .bind(object_id)
-    .bind(crate::collab::partition_key_from_collab_type(&collab_type))
     .bind(tokens_used as i32)
     .bind(fragments)
     .execute(transaction.deref_mut())
     .await?;
   Ok(())
+}
+
+pub async fn get_collab_embedding_fragment_ids<'a, E>(
+  tx: E,
+  collab_ids: Vec<Uuid>,
+) -> Result<HashMap<Uuid, Vec<String>>, sqlx::Error>
+where
+  E: Executor<'a, Database = Postgres>,
+{
+  let records = sqlx::query!(
+    r#"
+        SELECT oid, fragment_id
+        FROM af_collab_embeddings
+        WHERE oid = ANY($1::uuid[])
+        "#,
+    &collab_ids,
+  )
+  .fetch_all(tx)
+  .await?;
+
+  let mut fragment_ids_by_oid = HashMap::new();
+  for record in records {
+    // If your record.oid is not a String, convert it as needed.
+    fragment_ids_by_oid
+      .entry(record.oid)
+      .or_insert_with(Vec::new)
+      .push(record.fragment_id);
+  }
+  Ok(fragment_ids_by_oid)
 }
 
 pub async fn stream_collabs_without_embeddings(
@@ -150,7 +179,7 @@ pub async fn stream_collabs_without_embeddings(
 
 pub async fn update_collab_indexed_at<'a, E>(
   tx: E,
-  object_id: &str,
+  object_id: &Uuid,
   collab_type: &CollabType,
   indexed_at: DateTime<Utc>,
 ) -> Result<(), Error>
@@ -176,40 +205,26 @@ where
 
 pub async fn get_collabs_indexed_at<'a, E>(
   executor: E,
-  collab_ids: Vec<(String, CollabType)>,
-) -> Result<HashMap<String, DateTime<Utc>>, Error>
+  oids: Vec<Uuid>,
+) -> Result<HashMap<Uuid, DateTime<Utc>>, Error>
 where
   E: Executor<'a, Database = Postgres>,
 {
-  let (oids, partition_keys): (Vec<String>, Vec<i32>) = collab_ids
-    .into_iter()
-    .map(|(object_id, collab_type)| (object_id, partition_key_from_collab_type(&collab_type)))
-    .unzip();
-
   let result = sqlx::query!(
     r#"
         SELECT oid, indexed_at
         FROM af_collab
-        WHERE (oid, partition_key) = ANY (
-            SELECT UNNEST($1::text[]), UNNEST($2::int[])
-        )
+        WHERE oid = ANY (SELECT UNNEST($1::uuid[]))
         "#,
-    &oids,
-    &partition_keys
+    &oids
   )
   .fetch_all(executor)
   .await?;
 
   let map = result
     .into_iter()
-    .filter_map(|r| {
-      if let Some(indexed_at) = r.indexed_at {
-        Some((r.oid, indexed_at))
-      } else {
-        None
-      }
-    })
-    .collect::<HashMap<String, DateTime<Utc>>>();
+    .filter_map(|r| r.indexed_at.map(|indexed_at| (r.oid, indexed_at)))
+    .collect::<HashMap<Uuid, DateTime<Utc>>>();
   Ok(map)
 }
 
@@ -217,13 +232,13 @@ where
 pub struct CollabId {
   pub collab_type: CollabType,
   pub workspace_id: Uuid,
-  pub object_id: String,
+  pub object_id: Uuid,
 }
 
 impl From<CollabId> for QueryCollabParams {
   fn from(value: CollabId) -> Self {
     QueryCollabParams {
-      workspace_id: value.workspace_id.to_string(),
+      workspace_id: value.workspace_id,
       inner: QueryCollab {
         object_id: value.object_id,
         collab_type: value.collab_type,

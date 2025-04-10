@@ -1,109 +1,60 @@
-use crate::vector::rest::check_ureq_response;
-use anyhow::anyhow;
 use app_error::AppError;
-use appflowy_ai_client::dto::{EmbeddingRequest, OpenAIEmbeddingResponse};
-use serde::de::DeserializeOwned;
-use std::time::Duration;
+use appflowy_ai_client::dto::EmbeddingModel;
+use async_openai::config::{AzureConfig, Config, OpenAIConfig};
+use async_openai::types::{CreateEmbeddingRequest, CreateEmbeddingResponse};
+use async_openai::Client;
 use tiktoken_rs::CoreBPE;
-use unicode_segmentation::UnicodeSegmentation;
+use tracing::trace;
 
 pub const OPENAI_EMBEDDINGS_URL: &str = "https://api.openai.com/v1/embeddings";
 
 pub const REQUEST_PARALLELISM: usize = 40;
 
 #[derive(Debug, Clone)]
-pub struct Embedder {
-  bearer: String,
-  sync_client: ureq::Agent,
-  async_client: reqwest::Client,
+pub struct OpenAIEmbedder {
+  pub(crate) client: Client<OpenAIConfig>,
 }
 
-impl Embedder {
-  pub fn new(api_key: String) -> Self {
-    let bearer = format!("Bearer {api_key}");
-    let sync_client = ureq::AgentBuilder::new()
-      .max_idle_connections(REQUEST_PARALLELISM * 2)
-      .max_idle_connections_per_host(REQUEST_PARALLELISM * 2)
-      .build();
+impl OpenAIEmbedder {
+  pub fn new(config: OpenAIConfig) -> Self {
+    let client = Client::with_config(config);
 
-    let async_client = reqwest::Client::builder().build().unwrap();
-
-    Self {
-      bearer,
-      sync_client,
-      async_client,
-    }
-  }
-
-  pub fn embed(&self, params: EmbeddingRequest) -> Result<OpenAIEmbeddingResponse, AppError> {
-    for attempt in 0..3 {
-      let request = self
-        .sync_client
-        .post(OPENAI_EMBEDDINGS_URL)
-        .set("Authorization", &self.bearer)
-        .set("Content-Type", "application/json");
-
-      let result = check_ureq_response(request.send_json(&params));
-      let retry_duration = match result {
-        Ok(response) => {
-          let data = from_ureq_response::<OpenAIEmbeddingResponse>(response)?;
-          return Ok(data);
-        },
-        Err(retry) => retry.into_duration(attempt),
-      }
-      .map_err(|err| AppError::Internal(err.into()))?;
-      let retry_duration = retry_duration.min(Duration::from_secs(10));
-      std::thread::sleep(retry_duration);
-    }
-
-    Err(AppError::Internal(anyhow!(
-      "Failed to generate embeddings after 3 attempts"
-    )))
-  }
-
-  pub async fn async_embed(
-    &self,
-    params: EmbeddingRequest,
-  ) -> Result<OpenAIEmbeddingResponse, AppError> {
-    let request = self
-      .async_client
-      .post(OPENAI_EMBEDDINGS_URL)
-      .header("Authorization", &self.bearer)
-      .header("Content-Type", "application/json");
-
-    let result = request.json(&params).send().await?;
-    let response = from_response::<OpenAIEmbeddingResponse>(result).await?;
-    Ok(response)
+    Self { client }
   }
 }
 
-pub fn from_ureq_response<T>(resp: ureq::Response) -> Result<T, anyhow::Error>
-where
-  T: DeserializeOwned,
-{
-  let status_code = resp.status();
-  if status_code != 200 {
-    let body = resp.into_string()?;
-    anyhow::bail!("error code: {}, {}", status_code, body)
-  }
-
-  let resp = resp.into_json()?;
-  Ok(resp)
+#[derive(Debug, Clone)]
+pub struct AzureOpenAIEmbedder {
+  pub(crate) client: Client<AzureConfig>,
 }
 
-pub async fn from_response<T>(resp: reqwest::Response) -> Result<T, anyhow::Error>
-where
-  T: DeserializeOwned,
-{
-  let status_code = resp.status();
-  if status_code != 200 {
-    let body = resp.text().await?;
-    anyhow::bail!("error code: {}, {}", status_code, body)
+impl AzureOpenAIEmbedder {
+  pub fn new(mut config: AzureConfig) -> Self {
+    // Make sure your Azure AI service support the model
+    config = config.with_deployment_id(EmbeddingModel::default_model().to_string());
+    let client = Client::with_config(config);
+    Self { client }
   }
-
-  let resp = resp.json().await?;
-  Ok(resp)
 }
+
+pub async fn async_embed<C: Config>(
+  client: &Client<C>,
+  request: CreateEmbeddingRequest,
+) -> Result<CreateEmbeddingResponse, AppError> {
+  trace!(
+    "async embed with request: model:{:?}, dimension:{:?}, api_base:{}",
+    request.model,
+    request.dimensions,
+    client.config().api_base()
+  );
+  let response = client
+    .embeddings()
+    .create(request)
+    .await
+    .map_err(|err| AppError::Unhandled(err.to_string()))?;
+  Ok(response)
+}
+
 /// ## Execution Time Comparison Results
 ///
 /// The following results were observed when running `execution_time_comparison_tests`:
@@ -184,53 +135,41 @@ pub fn split_text_by_max_tokens(
   Ok(chunks)
 }
 
-#[inline]
-pub fn split_text_by_max_content_len(
-  content: String,
+pub fn group_paragraphs_by_max_content_len(
+  paragraphs: Vec<String>,
   max_content_len: usize,
-) -> Result<Vec<String>, AppError> {
-  if content.is_empty() {
-    return Ok(vec![]);
+) -> Vec<String> {
+  if paragraphs.is_empty() {
+    return vec![];
   }
 
-  if content.len() <= max_content_len {
-    return Ok(vec![content]);
-  }
-
-  // Content is longer than max_content_len; need to split
-  let mut result = Vec::with_capacity(1 + content.len() / max_content_len);
-  let mut fragment = String::with_capacity(max_content_len);
-  let mut current_len = 0;
-
-  for grapheme in content.graphemes(true) {
-    let grapheme_len = grapheme.len();
-    if current_len + grapheme_len > max_content_len {
-      if !fragment.is_empty() {
-        result.push(std::mem::take(&mut fragment));
+  let mut result = Vec::new();
+  let mut current = String::new();
+  for paragraph in paragraphs {
+    if paragraph.len() + current.len() > max_content_len {
+      // if we add the paragraph to the current content, it will exceed the limit
+      // so we push the current content to the result set and start a new chunk
+      let accumulated = std::mem::replace(&mut current, paragraph);
+      if !accumulated.is_empty() {
+        result.push(accumulated);
       }
-      current_len = 0;
-
-      if grapheme_len > max_content_len {
-        // Push the grapheme as a fragment on its own
-        result.push(grapheme.to_string());
-        continue;
-      }
+    } else {
+      // add the paragraph to the current chunk
+      current.push_str(&paragraph);
     }
-    fragment.push_str(grapheme);
-    current_len += grapheme_len;
   }
 
-  // Add the last fragment if it's not empty
-  if !fragment.is_empty() {
-    result.push(fragment);
+  if !current.is_empty() {
+    result.push(current);
   }
-  Ok(result)
+
+  result
 }
 
 #[cfg(test)]
 mod tests {
 
-  use crate::vector::open_ai::{split_text_by_max_content_len, split_text_by_max_tokens};
+  use crate::vector::open_ai::{group_paragraphs_by_max_content_len, split_text_by_max_tokens};
   use tiktoken_rs::cl100k_base;
 
   #[test]
@@ -246,7 +185,7 @@ mod tests {
       assert!(content.is_char_boundary(content.len()));
     }
 
-    let params = split_text_by_max_content_len(content.clone(), max_tokens).unwrap();
+    let params = group_paragraphs_by_max_content_len(vec![content], max_tokens);
     for content in params {
       assert!(content.is_char_boundary(0));
       assert!(content.is_char_boundary(content.len()));
@@ -283,7 +222,7 @@ mod tests {
     let params = split_text_by_max_tokens(content.clone(), max_tokens, &tokenizer).unwrap();
     assert_eq!(params.len(), 0);
 
-    let params = split_text_by_max_content_len(content.clone(), max_tokens).unwrap();
+    let params = group_paragraphs_by_max_content_len(params, max_tokens);
     assert_eq!(params.len(), 0);
   }
 
@@ -299,7 +238,7 @@ mod tests {
       assert_eq!(param, emoji);
     }
 
-    let params = split_text_by_max_content_len(content.clone(), max_tokens).unwrap();
+    let params = group_paragraphs_by_max_content_len(params, max_tokens);
     for (param, emoji) in params.iter().zip(emojis.iter()) {
       assert_eq!(param, emoji);
     }
@@ -317,7 +256,7 @@ mod tests {
     let reconstructed_content = params.join("");
     assert_eq!(reconstructed_content, content);
 
-    let params = split_text_by_max_content_len(content.clone(), max_tokens).unwrap();
+    let params = group_paragraphs_by_max_content_len(params, max_tokens);
     let reconstructed_content: String = params.concat();
     assert_eq!(reconstructed_content, content);
   }
@@ -347,7 +286,7 @@ mod tests {
     let reconstructed_content: String = params.concat();
     assert_eq!(reconstructed_content, content);
 
-    let params = split_text_by_max_content_len(content.clone(), max_tokens).unwrap();
+    let params = group_paragraphs_by_max_content_len(params, max_tokens);
     let reconstructed_content: String = params.concat();
     assert_eq!(reconstructed_content, content);
   }
@@ -365,7 +304,7 @@ mod tests {
     let reconstructed_content: String = params.concat();
     assert_eq!(reconstructed_content, content);
 
-    let params = split_text_by_max_content_len(content.clone(), max_tokens).unwrap();
+    let params = group_paragraphs_by_max_content_len(params, max_tokens);
     let reconstructed_content: String = params.concat();
     assert_eq!(reconstructed_content, content);
   }
@@ -379,7 +318,7 @@ mod tests {
     let reconstructed_content: String = params.concat();
     assert_eq!(reconstructed_content, content);
 
-    let params = split_text_by_max_content_len(content.clone(), max_tokens).unwrap();
+    let params = group_paragraphs_by_max_content_len(params, max_tokens);
     let reconstructed_content: String = params.concat();
     assert_eq!(reconstructed_content, content);
   }
@@ -393,7 +332,7 @@ mod tests {
     let reconstructed_content: String = params.concat();
     assert_eq!(reconstructed_content, content);
 
-    let params = split_text_by_max_content_len(content.clone(), max_tokens).unwrap();
+    let params = group_paragraphs_by_max_content_len(params, max_tokens);
     let reconstructed_content: String = params.concat();
     assert_eq!(reconstructed_content, content);
   }

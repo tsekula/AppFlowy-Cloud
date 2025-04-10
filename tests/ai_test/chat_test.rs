@@ -13,6 +13,7 @@ use shared_entity::dto::chat_dto::{
   ChatMessageMetadata, ChatRAGData, CreateAnswerMessageParams, CreateChatMessageParams,
   CreateChatParams, MessageCursor, UpdateChatParams,
 };
+use uuid::Uuid;
 
 #[tokio::test]
 async fn update_chat_settings_test() {
@@ -37,6 +38,8 @@ async fn update_chat_settings_test() {
     .unwrap();
 
   // Update name and rag_ids
+  let rag1 = Uuid::new_v4();
+  let rag2 = Uuid::new_v4();
   test_client
     .api_client
     .update_chat_settings(
@@ -45,7 +48,7 @@ async fn update_chat_settings_test() {
       UpdateChatParams {
         name: Some("my second chat".to_string()),
         metadata: None,
-        rag_ids: Some(vec!["rag1".to_string(), "rag2".to_string()]),
+        rag_ids: Some(vec![rag1.to_string(), rag2.to_string()]),
       },
     )
     .await
@@ -58,10 +61,7 @@ async fn update_chat_settings_test() {
     .await
     .unwrap();
   assert_eq!(settings.name, "my second chat");
-  assert_eq!(
-    settings.rag_ids,
-    vec!["rag1".to_string(), "rag2".to_string()]
-  );
+  assert_eq!(settings.rag_ids, vec![rag1.to_string(), rag2.to_string()]);
 
   // Update chat metadata
   test_client
@@ -357,7 +357,7 @@ async fn get_format_question_message_test() {
 
   let answer_stream = test_client
     .api_client
-    .stream_answer_v3(&workspace_id, query)
+    .stream_answer_v3(&workspace_id, query, None)
     .await
     .unwrap();
   let answer = collect_answer(answer_stream, None).await;
@@ -412,7 +412,7 @@ async fn get_text_with_image_message_test() {
 
   let answer_stream = test_client
     .api_client
-    .stream_answer_v3(&workspace_id, query)
+    .stream_answer_v3(&workspace_id, query, None)
     .await
     .unwrap();
   let answer = collect_answer(answer_stream, None).await;

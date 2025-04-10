@@ -49,8 +49,8 @@ pub struct CollabGroup {
 /// Inner state of [CollabGroup] that's private and hidden behind Arc, so that it can be moved into
 /// tasks.
 struct CollabGroupState {
-  workspace_id: String,
-  object_id: String,
+  workspace_id: Uuid,
+  object_id: Uuid,
   collab_type: CollabType,
   /// A list of subscribers to this group. Each subscriber will receive updates from the
   /// broadcast.
@@ -77,8 +77,8 @@ impl CollabGroup {
   #[allow(clippy::too_many_arguments)]
   pub async fn new<S>(
     uid: i64,
-    workspace_id: String,
-    object_id: String,
+    workspace_id: Uuid,
+    object_id: Uuid,
     collab_type: CollabType,
     metrics: Arc<CollabRealtimeMetrics>,
     storage: Arc<S>,
@@ -94,9 +94,9 @@ impl CollabGroup {
     let is_new_collab = state_vector.is_empty();
     let persister = CollabPersister::new(
       uid,
-      workspace_id.clone(),
-      object_id.clone(),
-      collab_type.clone(),
+      workspace_id,
+      object_id,
+      collab_type,
       storage,
       collab_redis_stream,
       indexer_scheduler,
@@ -160,13 +160,13 @@ impl CollabGroup {
   }
 
   #[inline]
-  pub fn workspace_id(&self) -> &str {
+  pub fn workspace_id(&self) -> &Uuid {
     &self.state.workspace_id
   }
 
   #[inline]
   #[allow(dead_code)]
-  pub fn object_id(&self) -> &str {
+  pub fn object_id(&self) -> &Uuid {
     &self.state.object_id
   }
 
@@ -233,7 +233,7 @@ impl CollabGroup {
       seq_num
     );
     let payload = Message::Sync(SyncMessage::Update(update.data)).encode_v1();
-    let message = BroadcastSync::new(update.sender, state.object_id.clone(), payload, seq_num);
+    let message = BroadcastSync::new(update.sender, state.object_id.to_string(), payload, seq_num);
     for mut e in state.subscribers.iter_mut() {
       let subscription = e.value_mut();
       if message.origin == subscription.collab_origin {
@@ -255,24 +255,21 @@ impl CollabGroup {
 
   /// Task used to receive awareness updates from Redis.
   async fn inbound_awareness_task(state: Arc<CollabGroupState>) -> Result<(), RealtimeError> {
+    let object_id = state.object_id;
     let updates = state
       .persister
       .collab_redis_stream
-      .awareness_updates(&state.workspace_id, &state.object_id);
+      .awareness_updates(&object_id);
     pin_mut!(updates);
     loop {
       tokio::select! {
         _ = state.shutdown.cancelled() => {
           break;
         }
-        res = updates.next() => {
+        res = updates.recv() => {
           match res {
-            Some(Ok(awareness_update)) => {
+            Some(awareness_update) => {
               Self::handle_inbound_awareness(&state, awareness_update).await;
-            },
-            Some(Err(err)) => {
-              tracing::warn!("failed to handle incoming update for collab `{}`: {}", state.object_id, err);
-              break;
             },
             None => {
               break;
@@ -292,7 +289,7 @@ impl CollabGroup {
     );
     let sender = update.sender;
     let message = AwarenessSync::new(
-      state.object_id.clone(),
+      state.object_id.to_string(),
       Message::Awareness(update.data.encode_v1()).encode_v1(),
       CollabOrigin::Empty,
     );
@@ -357,15 +354,15 @@ impl CollabGroup {
       .map_err(|e| AppError::Internal(e.into()))?;
     let collab = Collab::new_with_source(
       CollabOrigin::Server,
-      self.object_id(),
+      &self.object_id().to_string(),
       DataSource::DocStateV1(collab.doc_state.into()),
       vec![],
       false,
     )
     .map_err(|e| AppError::Internal(e.into()))?;
-    let workspace_id = &self.state.workspace_id;
-    let object_id = &self.state.object_id;
-    let collab_type = &self.state.collab_type;
+    let workspace_id = self.state.workspace_id;
+    let object_id = self.state.object_id;
+    let collab_type = self.state.collab_type;
     self
       .state
       .persister
@@ -389,7 +386,7 @@ impl CollabGroup {
     let encoded_collab = self.encode_collab().await?;
     let collab = Collab::new_with_source(
       CollabOrigin::Server,
-      self.object_id(),
+      &self.object_id().to_string(),
       DataSource::DocStateV1(encoded_collab.doc_state.into()),
       vec![],
       false,
@@ -521,8 +518,9 @@ impl CollabGroup {
   where
     Sink: SubscriptionSink + 'static,
   {
+    let object_id = state.object_id.to_string();
     for (message_object_id, messages) in msg.0 {
-      if state.object_id != message_object_id {
+      if object_id != message_object_id {
         error!(
           "Expect object id:{} but got:{}",
           state.object_id, message_object_id
@@ -871,8 +869,8 @@ impl Drop for Subscription {
 
 struct CollabPersister {
   uid: i64,
-  workspace_id: String,
-  object_id: String,
+  workspace_id: Uuid,
+  object_id: Uuid,
   collab_type: CollabType,
   storage: Arc<dyn CollabStorage>,
   collab_redis_stream: Arc<CollabRedisStream>,
@@ -889,8 +887,8 @@ impl CollabPersister {
   #[allow(clippy::too_many_arguments)]
   pub async fn new(
     uid: i64,
-    workspace_id: String,
-    object_id: String,
+    workspace_id: Uuid,
+    object_id: Uuid,
     collab_type: CollabType,
     storage: Arc<dyn CollabStorage>,
     collab_redis_stream: Arc<CollabRedisStream>,
@@ -956,7 +954,12 @@ impl CollabPersister {
     let start = Instant::now();
     let mut collab = match self.load_collab_full().await? {
       Some(collab) => collab,
-      None => Collab::new_with_origin(CollabOrigin::Server, self.object_id.clone(), vec![], false),
+      None => Collab::new_with_origin(
+        CollabOrigin::Server,
+        self.object_id.to_string(),
+        vec![],
+        false,
+      ),
     };
     self.metrics.load_collab_count.inc();
 
@@ -975,8 +978,9 @@ impl CollabPersister {
     for (message_id, update) in updates {
       i += 1;
       let update: Update = update.into_update()?;
-      tx.apply_update(update)
-        .map_err(|err| RTProtocolError::YrsApplyUpdate(err.to_string()))?;
+      tx.apply_update(update).map_err(|err| {
+        RTProtocolError::YrsApplyUpdate(format!("collab {} - {}", self.object_id, err))
+      })?;
       last_message_id = Some(message_id); //TODO: shouldn't this happen before decoding?
       self.metrics.apply_update_count.inc();
     }
@@ -1018,16 +1022,18 @@ impl CollabPersister {
       if collab.is_none() {
         collab = Some(match self.load_collab_full().await? {
           Some(collab) => collab,
-          None => {
-            Collab::new_with_origin(CollabOrigin::Server, self.object_id.clone(), vec![], false)
-          },
+          None => Collab::new_with_origin(
+            CollabOrigin::Server,
+            self.object_id.to_string(),
+            vec![],
+            false,
+          ),
         })
       };
       let collab = collab.as_mut().unwrap();
-      collab
-        .transact_mut()
-        .apply_update(update)
-        .map_err(|err| RTProtocolError::YrsApplyUpdate(err.to_string()))?;
+      collab.transact_mut().apply_update(update).map_err(|err| {
+        RTProtocolError::YrsApplyUpdate(format!("collab {} - {}", self.object_id, err))
+      })?;
       last_message_id = Some(message_id); //TODO: shouldn't this happen before decoding?
       self.metrics.apply_update_count.inc();
     }
@@ -1075,8 +1081,6 @@ impl CollabPersister {
         // persisted one in the database
         self.save_attempt(&mut snapshot.collab, message_id).await?;
       }
-    } else {
-      tracing::trace!("collab {} state has not changed", self.object_id);
     }
     Ok(())
   }
@@ -1094,7 +1098,7 @@ impl CollabPersister {
     // perform snapshot at the same time, so we'll use lease to let only one of them atm.
     if let Some(mut lease) = self
       .collab_redis_stream
-      .lease(&self.workspace_id, &self.object_id)
+      .lease(&self.workspace_id.to_string(), &self.object_id.to_string())
       .await?
     {
       let doc_state_light = collab
@@ -1106,9 +1110,7 @@ impl CollabPersister {
       match self.collab_type {
         CollabType::Document => {
           let txn = collab.transact();
-          if let Some(text) = DocumentBody::from_collab(collab)
-            .and_then(|body| body.to_plain_text(txn, false, true).ok())
-          {
+          if let Some(text) = DocumentBody::from_collab(collab).map(|body| body.paragraphs(txn)) {
             self.index_collab_content(text);
           }
         },
@@ -1151,42 +1153,36 @@ impl CollabPersister {
       .metrics
       .collab_size
       .observe(encoded_collab.len() as f64);
-    let params = CollabParams::new(&self.object_id, self.collab_type.clone(), encoded_collab);
+    let params = CollabParams::new(self.object_id, self.collab_type, encoded_collab);
     self
       .storage
-      .queue_insert_or_update_collab(&self.workspace_id, &self.uid, params, true)
+      .queue_insert_or_update_collab(self.workspace_id, &self.uid, params, true)
       .await
       .map_err(|err| RealtimeError::Internal(err.into()))?;
     Ok(())
   }
 
-  fn index_collab_content(&self, text: String) {
-    if let Ok(workspace_id) = Uuid::parse_str(&self.workspace_id) {
-      let indexed_collab = UnindexedCollabTask::new(
-        workspace_id,
-        self.object_id.clone(),
-        self.collab_type.clone(),
-        UnindexedData::Text(text),
+  fn index_collab_content(&self, paragraphs: Vec<String>) {
+    let indexed_collab = UnindexedCollabTask::new(
+      self.workspace_id,
+      self.object_id,
+      self.collab_type,
+      UnindexedData::Paragraphs(paragraphs),
+    );
+    if let Err(err) = self
+      .indexer_scheduler
+      .index_pending_collab_one(indexed_collab, false)
+    {
+      warn!(
+        "failed to index collab `{}/{}`: {}",
+        self.workspace_id, self.object_id, err
       );
-      if let Err(err) = self
-        .indexer_scheduler
-        .index_pending_collab_one(indexed_collab, false)
-      {
-        warn!(
-          "failed to index collab `{}/{}`: {}",
-          self.workspace_id, self.object_id, err
-        );
-      }
     }
   }
 
   async fn load_collab_full(&self) -> Result<Option<Collab>, RealtimeError> {
     // we didn't find a snapshot, or we want a lightweight collab version
-    let params = QueryCollabParams::new(
-      self.object_id.clone(),
-      self.collab_type.clone(),
-      self.workspace_id.clone(),
-    );
+    let params = QueryCollabParams::new(self.object_id, self.collab_type, self.workspace_id);
     let result = self
       .storage
       .get_encode_collab(GetCollabOrigin::Server, params, false)
@@ -1199,7 +1195,7 @@ impl CollabPersister {
 
     let collab: Collab = Collab::new_with_source(
       CollabOrigin::Server,
-      &self.object_id,
+      &self.object_id.to_string(),
       DataSource::DocStateV1(doc_state.into()),
       vec![],
       false,

@@ -1,5 +1,5 @@
 use crate::http::log_request_id;
-use crate::Client;
+use crate::{process_response_data, process_response_error, Client};
 
 use app_error::AppError;
 use client_api_entity::chat_dto::{
@@ -21,12 +21,13 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tracing::error;
+use uuid::Uuid;
 
 impl Client {
   /// Create a new chat
   pub async fn create_chat(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     params: CreateChatParams,
   ) -> Result<(), AppResponseError> {
     let url = format!("{}/api/chat/{workspace_id}", self.base_url);
@@ -36,13 +37,12 @@ impl Client {
       .json(&params)
       .send()
       .await?;
-    log_request_id(&resp);
-    AppResponse::<()>::from_response(resp).await?.into_error()
+    process_response_error(resp).await
   }
 
   pub async fn update_chat_settings(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
     params: UpdateChatParams,
   ) -> Result<(), AppResponseError> {
@@ -56,12 +56,11 @@ impl Client {
       .json(&params)
       .send()
       .await?;
-    log_request_id(&resp);
-    AppResponse::<()>::from_response(resp).await?.into_error()
+    process_response_error(resp).await
   }
   pub async fn get_chat_settings(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
   ) -> Result<ChatSettings, AppResponseError> {
     let url = format!(
@@ -73,16 +72,13 @@ impl Client {
       .await?
       .send()
       .await?;
-    log_request_id(&resp);
-    AppResponse::<ChatSettings>::from_response(resp)
-      .await?
-      .into_data()
+    process_response_data::<ChatSettings>(resp).await
   }
 
   /// Delete a chat for given chat_id
   pub async fn delete_chat(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
   ) -> Result<(), AppResponseError> {
     let url = format!("{}/api/chat/{workspace_id}/{chat_id}", self.base_url);
@@ -91,14 +87,13 @@ impl Client {
       .await?
       .send()
       .await?;
-    log_request_id(&resp);
-    AppResponse::<()>::from_response(resp).await?.into_error()
+    process_response_error(resp).await
   }
 
   /// Save a question message to a chat
   pub async fn create_question(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
     params: CreateChatMessageParams,
   ) -> Result<ChatMessage, AppResponseError> {
@@ -112,16 +107,13 @@ impl Client {
       .json(&params)
       .send()
       .await?;
-    log_request_id(&resp);
-    AppResponse::<ChatMessage>::from_response(resp)
-      .await?
-      .into_data()
+    process_response_data::<ChatMessage>(resp).await
   }
 
   /// save an answer message to a chat
   pub async fn save_answer(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
     params: CreateAnswerMessageParams,
   ) -> Result<ChatMessage, AppResponseError> {
@@ -135,15 +127,12 @@ impl Client {
       .json(&params)
       .send()
       .await?;
-    log_request_id(&resp);
-    AppResponse::<ChatMessage>::from_response(resp)
-      .await?
-      .into_data()
+    process_response_data::<ChatMessage>(resp).await
   }
 
   pub async fn stream_answer_v2(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
     question_id: i64,
   ) -> Result<QuestionStream, AppResponseError> {
@@ -174,15 +163,16 @@ impl Client {
 
   pub async fn stream_answer_v3(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     query: ChatQuestionQuery,
+    chat_model: Option<String>,
   ) -> Result<QuestionStream, AppResponseError> {
     let url = format!(
       "{}/api/chat/{workspace_id}/{}/answer/stream",
       self.base_url, query.chat_id
     );
     let resp = self
-      .http_client_with_auth(Method::POST, &url)
+      .http_client_with_model(Method::POST, &url, chat_model)
       .await?
       .timeout(Duration::from_secs(60))
       .json(&query)
@@ -195,7 +185,7 @@ impl Client {
 
   pub async fn get_answer(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
     question_message_id: i64,
   ) -> Result<ChatMessage, AppResponseError> {
@@ -208,17 +198,14 @@ impl Client {
       .await?
       .send()
       .await?;
-    log_request_id(&resp);
-    AppResponse::<ChatMessage>::from_response(resp)
-      .await?
-      .into_data()
+    process_response_data::<ChatMessage>(resp).await
   }
 
   /// Update chat message content. It will override the content of the message.
   /// A message can be a question or an answer
   pub async fn update_chat_message(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
     params: UpdateChatMessageContentParams,
   ) -> Result<(), AppResponseError> {
@@ -232,14 +219,13 @@ impl Client {
       .json(&params)
       .send()
       .await?;
-    log_request_id(&resp);
-    AppResponse::<()>::from_response(resp).await?.into_error()
+    process_response_error(resp).await
   }
 
   /// Get related question for a chat message. The message_d should be the question's id
   pub async fn get_chat_related_question(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
     message_id: i64,
   ) -> Result<RepeatedRelatedQuestion, AppResponseError> {
@@ -252,16 +238,13 @@ impl Client {
       .await?
       .send()
       .await?;
-    log_request_id(&resp);
-    AppResponse::<RepeatedRelatedQuestion>::from_response(resp)
-      .await?
-      .into_data()
+    process_response_data::<RepeatedRelatedQuestion>(resp).await
   }
 
   /// Deprecated since v0.9.24. Return list of chat messages for a chat
   pub async fn get_chat_messages(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
     offset: MessageCursor,
     limit: u64,
@@ -290,16 +273,14 @@ impl Client {
       .await?
       .send()
       .await?;
-    AppResponse::<RepeatedChatMessage>::from_response(resp)
-      .await?
-      .into_data()
+    process_response_data::<RepeatedChatMessage>(resp).await
   }
 
   /// Return list of chat messages for a chat. Each message will have author_uuid as
   /// as the author's uid, as author_uid will face precision issue in the browser environment.
   pub async fn get_chat_messages_with_author_uuid(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
     offset: MessageCursor,
     limit: u64,
@@ -328,14 +309,12 @@ impl Client {
       .await?
       .send()
       .await?;
-    AppResponse::<RepeatedChatMessageWithAuthorUuid>::from_response(resp)
-      .await?
-      .into_data()
+    process_response_data::<RepeatedChatMessageWithAuthorUuid>(resp).await
   }
 
   pub async fn get_question_message_from_answer_id(
     &self,
-    workspace_id: &str,
+    workspace_id: &Uuid,
     chat_id: &str,
     answer_message_id: i64,
   ) -> Result<Option<ChatMessage>, AppResponseError> {
@@ -350,9 +329,7 @@ impl Client {
       .query(&[("answer_message_id", answer_message_id)])
       .send()
       .await?;
-    AppResponse::<Option<ChatMessage>>::from_response(resp)
-      .await?
-      .into_data()
+    process_response_data::<Option<ChatMessage>>(resp).await
   }
 
   pub async fn calculate_similarity(
@@ -369,10 +346,7 @@ impl Client {
       .json(&params)
       .send()
       .await?;
-    log_request_id(&resp);
-    AppResponse::<SimilarityResponse>::from_response(resp)
-      .await?
-      .into_data()
+    process_response_data::<SimilarityResponse>(resp).await
   }
 }
 

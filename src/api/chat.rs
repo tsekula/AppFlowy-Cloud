@@ -108,7 +108,7 @@ pub fn chat_scope() -> Scope {
       )
 }
 async fn create_chat_handler(
-  path: web::Path<String>,
+  path: web::Path<Uuid>,
   state: Data<AppState>,
   payload: Json<CreateChatParams>,
 ) -> actix_web::Result<JsonAppResponse<()>> {
@@ -347,6 +347,7 @@ async fn answer_stream_v2_handler(
       )
     },
     Err(err) => {
+      trace!("[Chat] stream answer failed: {}", err);
       state.metrics.ai_metrics.record_failed_stream_count(1);
       Ok(
         HttpResponse::ServiceUnavailable()

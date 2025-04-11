@@ -132,7 +132,7 @@ services:
 
   admin_frontend:
     restart: on-failure
-    image: appflowyinc/admin_frontend:${APPFLOWY_ADMIN_FRONTEND_VERSION:-latest}
+    image: appflowyinc/admin_frontend
     environment:
       - RUST_LOG=${RUST_LOG:-info}
       - ADMIN_FRONTEND_REDIS_URL=${ADMIN_FRONTEND_REDIS_URL:-redis://redis:6379}

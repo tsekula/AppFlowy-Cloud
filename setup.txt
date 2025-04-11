@@ -1,0 +1,7 @@
+Setup steps for Coolify
+
+1. new project in Coolify, set to *wrong* docker-compose.yml file
+2. paste in custom Environment Variables; check that 'GOTRUE_DATABASE_URL' doesn't use variables
+3. on General, set proper docker-compose.yml
+4. check 'Preserve Repository During Deployment'
+5. in Persistent Storage, setup nginx.conf, 2 private keys as files; paste in contents

@@ -1,7 +1,9 @@
-# Essential services for AppFlowy Cloud
-
 services:
-
+  nginx:
+    restart: on-failure
+    image: nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf    
   postgres:
     restart: on-failure
     image: pgvector/pgvector:pg16
@@ -60,10 +62,29 @@ services:
       - GOTRUE_MAILER_URLPATHS_INVITE=/gotrue/verify
       - GOTRUE_MAILER_URLPATHS_RECOVERY=/gotrue/verify
       - GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE=/gotrue/verify
+      - GOTRUE_MAILER_TEMPLATES_MAGIC_LINK=${GOTRUE_MAILER_TEMPLATES_MAGIC_LINK}
       - GOTRUE_SMTP_ADMIN_EMAIL=${GOTRUE_SMTP_ADMIN_EMAIL}                # email with admin privileges e.g. internal@appflowy.io
       - GOTRUE_SMTP_MAX_FREQUENCY=${GOTRUE_SMTP_MAX_FREQUENCY:-1ns}       # set to 1ns for running tests
       - GOTRUE_RATE_LIMIT_EMAIL_SENT=${GOTRUE_RATE_LIMIT_EMAIL_SENT:-100} # number of email sendable per minute
       - GOTRUE_MAILER_AUTOCONFIRM=${GOTRUE_MAILER_AUTOCONFIRM:-false}     # change this to true to skip email confirmation
+      # Google OAuth config
+      - GOTRUE_EXTERNAL_GOOGLE_ENABLED=${GOTRUE_EXTERNAL_GOOGLE_ENABLED}
+      - GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID=${GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID}
+      - GOTRUE_EXTERNAL_GOOGLE_SECRET=${GOTRUE_EXTERNAL_GOOGLE_SECRET}
+      - GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI=${GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI}
+      # GITHUB OAuth config
+      - GOTRUE_EXTERNAL_GITHUB_ENABLED=${GOTRUE_EXTERNAL_GITHUB_ENABLED}
+      - GOTRUE_EXTERNAL_GITHUB_CLIENT_ID=${GOTRUE_EXTERNAL_GITHUB_CLIENT_ID}
+      - GOTRUE_EXTERNAL_GITHUB_SECRET=${GOTRUE_EXTERNAL_GITHUB_SECRET}
+      - GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI=${GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI}
+      # Discord OAuth config
+      - GOTRUE_EXTERNAL_DISCORD_ENABLED=${GOTRUE_EXTERNAL_DISCORD_ENABLED}
+      - GOTRUE_EXTERNAL_DISCORD_CLIENT_ID=${GOTRUE_EXTERNAL_DISCORD_CLIENT_ID}
+      - GOTRUE_EXTERNAL_DISCORD_SECRET=${GOTRUE_EXTERNAL_DISCORD_SECRET}
+      - GOTRUE_EXTERNAL_DISCORD_REDIRECT_URI=${GOTRUE_EXTERNAL_DISCORD_REDIRECT_URI}
+      # SAML 2.0 OAuth config
+      - GOTRUE_SAML_ENABLED=${GOTRUE_SAML_ENABLED}
+      - GOTRUE_SAML_PRIVATE_KEY=${GOTRUE_SAML_PRIVATE_KEY}
 
   appflowy_cloud:
     restart: on-failure
@@ -85,6 +106,7 @@ services:
       - APPFLOWY_S3_SECRET_KEY=${APPFLOWY_S3_SECRET_KEY}
       - APPFLOWY_S3_BUCKET=${APPFLOWY_S3_BUCKET}
       - APPFLOWY_S3_REGION=${APPFLOWY_S3_REGION}
+      # - APPFLOWY_S3_PRESIGNED_URL_ENDPOINT=${APPFLOWY_S3_PRESIGNED_URL_ENDPOINT}
       - APPFLOWY_MAILER_SMTP_HOST=${APPFLOWY_MAILER_SMTP_HOST}
       - APPFLOWY_MAILER_SMTP_PORT=${APPFLOWY_MAILER_SMTP_PORT}
       - APPFLOWY_MAILER_SMTP_USERNAME=${APPFLOWY_MAILER_SMTP_USERNAME}
@@ -105,7 +127,7 @@ services:
 
   admin_frontend:
     restart: on-failure
-    image: appflowyinc/admin_frontend:${APPFLOWY_ADMIN_FRONTEND_VERSION:-latest}
+    image: appflowyinc/admin_frontend
     environment:
       - RUST_LOG=${RUST_LOG:-info}
       - ADMIN_FRONTEND_REDIS_URL=${ADMIN_FRONTEND_REDIS_URL:-redis://redis:6379}
@@ -163,8 +185,5 @@ services:
     environment:
       - AF_BASE_URL=${APPFLOWY_BASE_URL:?err}
       - AF_GOTRUE_URL=${API_EXTERNAL_URL}
-
 volumes:
   postgres_data:
-  caddy_data:
-  caddy_config:
